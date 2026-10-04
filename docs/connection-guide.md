@@ -249,6 +249,26 @@ launchctl kickstart -k "gui/$(id -u)/com.genie.cmuxremote"
 이 앱은 Wi-Fi가 아니라 **Tailscale**로 연결합니다. 둘 다 Tailscale에
 로그인돼 있어야 하고, 앱에는 `tailscale ip -4`로 나온 IP를 넣어야 합니다.
 
+**Q. 집 Wi-Fi에서는 되는데 모바일 데이터(LTE/5G)에서는 안 돼요.**
+2026-09-29 이전에 빌드된 relay는 WebSocket 업그레이드 후 **100 ms** 안에
+`hello`가 오지 않으면 연결을 닫았습니다. 폰은 WebSocket open 콜백에서
+`hello`를 보내므로 이 예산은 사실상 LAN 한 홉도 겨우 넘기는 수준이었고,
+모바일에서는 왕복이 **0.3~0.4초**(직접 연결이든 DERP 경유든)라 연결이
+맺어지자마자 닫혔습니다. Tailscale 자체는 계속 연결된 것으로 보였기
+때문에 원인이 보이지 않았습니다. 로그에는 이렇게 남습니다:
+
+```text
+listening on [IPv4]0.0.0.0/0.0.0.0:4399
+warning cmux-relay.ws: WebSocket channel failed: Connection reset by peer
+```
+
+수정은 바이너리에 들어가므로 재설치가 필요합니다:
+
+```bash
+cd cmux-remote && ./scripts/install-launchd.sh
+launchctl kickstart -k "gui/$(id -u)/com.genie.cmuxremote"
+```
+
 **Q. 알림이 안 와요.**
 현재 알림은 *로컬* 알림이라 앱이 켜져 있거나 백그라운드에서 연결이
 살아있을 때만 도착합니다. 앱을 완전히 종료하면 알림이 오지 않습니다

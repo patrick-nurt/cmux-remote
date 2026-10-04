@@ -250,6 +250,27 @@ launchctl kickstart -k "gui/$(id -u)/com.genie.cmuxremote"
 This app connects over **Tailscale**, not Wi-Fi. Both ends must be signed
 into Tailscale, and the app needs the IP from `tailscale ip -4`.
 
+**Q. It connects on home Wi-Fi but never on cellular / mobile data.**
+Relays built before 2026-09-29 closed any WebSocket whose `hello` did not
+arrive within **100 ms** of the upgrade. The phone sends `hello` from its
+WebSocket open callback, so that budget covered barely a single LAN hop —
+on cellular the round trip is ~0.3-0.4 s (direct **or** DERP-relayed) and
+every connection was closed the instant it opened, while Tailscale still
+showed itself connected. Symptom in the log:
+
+```text
+listening on [IPv4]0.0.0.0/0.0.0.0:4399
+warning cmux-relay.ws: WebSocket channel failed: Connection reset by peer
+```
+
+(no `cmux event stream attached` follow-up from the phone). Reinstall to
+pick up the fix, since it ships in the binary:
+
+```bash
+cd cmux-remote && ./scripts/install-launchd.sh
+launchctl kickstart -k "gui/$(id -u)/com.genie.cmuxremote"
+```
+
 **Q. No notifications.**
 Notifications are currently *local*: they only arrive while the app is
 open or alive in the background. If you fully quit the app, none arrive

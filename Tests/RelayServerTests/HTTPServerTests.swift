@@ -119,6 +119,42 @@ final class HTTPServerTests: XCTestCase {
         }
     }
 
+    /// A phone on cellular reaches the relay with a ~0.3-0.4 s round trip, and
+    /// it sends `hello` from its WebSocket `onOpen` callback — so the relay
+    /// must accept a hello that arrives noticeably later than one LAN hop.
+    /// Regression: a 100 ms hello budget closed every cellular connection the
+    /// instant it upgraded, which presented as "connects on home Wi-Fi only".
+    func testHelloAcceptedAfterSlowCellularRoundTrip() async throws {
+        try await withFixture { fx in
+            let token = try fx.deviceStore.register(deviceId: "d-slow-hello",
+                                                    loginName: "a@b",
+                                                    hostname: "iPhone",
+                                                    apnsToken: nil)
+            let client = try await LoopbackWebSocketClient.connect(
+                group: fx.group, host: fx.host, port: fx.port, token: token
+            )
+            do {
+                try await Task.sleep(for: .milliseconds(1_500))
+                try await client.sendText(
+                    #"{"deviceId":"d-slow-hello","appVersion":"1","protocolVersion":1}"#
+                )
+                let battery = try await client.sendTextAwaitingResponse(
+                    #"{"id":"battery","method":"host.battery","params":{}}"#
+                )
+                let response = try JSONDecoder().decode(
+                    RPCResponse.self, from: Data(battery.utf8)
+                )
+                XCTAssertEqual(response.id, "battery")
+                XCTAssertTrue(response.isOk,
+                              "relay must keep serving a connection whose hello raced a slow uplink")
+            } catch {
+                await client.close()
+                throw error
+            }
+            await client.close()
+        }
+    }
+
     func testWebSocketFrameLimitCoversMaxFileUploadEnvelope() {
         let base64Length = ((RelayFileUploadService.maxBytes + 2) / 3) * 4
         let conservativeJSONEnvelopeOverhead = 4096
