@@ -14,11 +14,15 @@ struct CmuxRemoteApp: App {
     @State private var bootstrapped = false
     @State private var activeRPC: RPCClient?
     @State private var splashFinished = Self.shouldSkipSplash()
+    /// Deep link received from a tapped notification (`cmux://surface/<id>`).
+    /// Buffered here so a cold launch still navigates once ContentView mounts.
+    @State private var pendingDeepLink: URL?
     @AppStorage("cmux.demoMode") private var demoMode: Bool = false
     @AppStorage("cmux.localNotificationsEnabled") private var localNotificationsEnabled: Bool = true
     @AppStorage("cmux.bannerAllNotifications") private var bannerAllNotifications: Bool = false
 
     init() {
+        _pendingDeepLink = State(initialValue: Self.deepLinkFromEnvironment(ProcessInfo.processInfo))
         let routingRPC = OfflineRPCDispatch()
         let attachmentStore = AttachmentStore(rpc: routingRPC)
         let attachments = AttachmentCoordinator(
@@ -50,6 +54,7 @@ struct CmuxRemoteApp: App {
                     notifStore: notifStore,
                     hostStatusStore: hostStatusStore,
                     remoteFiles: remoteFiles,
+                    pendingDeepLink: $pendingDeepLink,
                     onDisconnect: disconnect,
                     onReconnect: reconnect,
                     onTriggerTestNotification: triggerTestNotification
@@ -87,6 +92,14 @@ struct CmuxRemoteApp: App {
         let info = ProcessInfo.processInfo
         return info.environment["CMUX_SKIP_SPLASH"] == "1"
             || info.arguments.contains("--cmux-skip-splash")
+    }
+
+    /// Debug/UI-test hook mirroring CMUX_FAKE_RELAY: simulate a `cmux://`
+    /// deep link arriving at launch so the navigation path is testable
+    /// without the OS "Open in app?" confirmation sheet.
+    private static func deepLinkFromEnvironment(_ info: ProcessInfo) -> URL? {
+        guard let raw = info.environment["CMUX_DEEPLINK_URL"], !raw.isEmpty else { return nil }
+        return URL(string: raw)
     }
 
     private static func shouldUseFakeRelay(_ info: ProcessInfo) -> Bool {
@@ -374,7 +387,11 @@ struct CmuxRemoteApp: App {
     }
 
     private func handleDeepLink(_ url: URL) {
-        // cmux://surface/<id> will land with APNs/deep-link handling in M6.
+        // cmux://surface/<surface-uuid>?workspace=<workspace-uuid>
+        // posted by the ntfy push's click/action. ContentView performs the
+        // navigation once it observes this.
+        guard url.scheme == "cmux" else { return }
+        pendingDeepLink = url
     }
 
     @MainActor

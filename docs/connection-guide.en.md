@@ -236,6 +236,60 @@ A previously paired device token may have been revoked.
 
 ---
 
+## Phone push (ntfy)
+
+cmux **redacts** notification text on its event stream (`payload.title` and
+`payload.body` arrive `null`, exposing only `*_length` and
+`redacted_fields`). A stream consumer therefore cannot see the real
+message — which is why the relay does not forward notifications. The real
+title/body, the agent context, and the workspace/surface live in cmux's
+**notification hook** instead.
+
+`scripts/cmux-notify-ntfy.py` is that hook: cmux pipes each notification's
+policy JSON to it on stdin, and it POSTs a rich push to ntfy (default
+`https://ntfy.sh`) while returning the policy unchanged, so cmux's own
+banners, sounds and history are untouched.
+
+Install it on the Mac:
+
+```bash
+mkdir -p ~/.local/bin
+cp scripts/cmux-notify-ntfy.py ~/.local/bin/cmux-notify-ntfy
+chmod +x ~/.local/bin/cmux-notify-ntfy
+```
+
+Register it in `~/.config/cmux/cmux.json` (then `cmux reload-config`):
+
+```json
+{
+  "notifications": {
+    "hooks": [
+      {
+        "id": "ntfy-push",
+        "command": "/Users/<you>/.local/bin/cmux-notify-ntfy",
+        "timeoutSeconds": 10
+      }
+    ]
+  }
+}
+```
+
+Subscribe to the same topic in the free **ntfy** iOS app. The push carries:
+
+- the notification title and body,
+- the agent kind and category (`turn complete` / `needs your input`),
+- `space:` the workspace › surface names,
+- `cwd:`, and
+- a `cmux://surface/<id>?workspace=<id>` deep link — tap the notification
+  (or the **Open in cmux Remote** action) to land on that surface.
+
+Set `CMUX_NTFY_TOPIC` / `CMUX_NTFY_SERVER` / `CMUX_NTFY_TOKEN` to override
+the built-in topic, or use a self-hosted ntfy. The topic name is the only
+credential, so treat it as a password.
+
+> The deep link works only while the app is installed; if the workspace no
+> longer exists the app falls back to its Inbox.
+
 ## FAQ
 
 **Q. It disconnects every time I restart cmux.**

@@ -10,6 +10,9 @@ struct ContentView: View {
     let notifStore: NotificationStore
     let hostStatusStore: HostStatusStore
     let remoteFiles: RemoteFileFeatureCoordinator
+    /// Set by a `cmux://` deep link (tapped push notification). Cleared once
+    /// the navigation it requests has been performed.
+    @Binding var pendingDeepLink: URL?
     let onDisconnect: () -> Void
     let onReconnect: () -> Void
     let onTriggerTestNotification: @MainActor () -> TestNotificationResult
@@ -48,6 +51,17 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .cmuxRemoteNotificationResponse)) { notification in
             openNotificationUserInfo(notification.userInfo)
         }
+        .onChange(of: pendingDeepLink) { _, _ in
+            resolvePendingDeepLink()
+        }
+        .onChange(of: workspaceStore.workspaces.map(\.id)) { _, _ in
+            // A cold-launch deep link resolves before workspace.list returns,
+            // so retry as the list arrives.
+            resolvePendingDeepLink()
+        }
+        .onAppear {
+            resolvePendingDeepLink()
+        }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if selectedTab != .active {
@@ -71,6 +85,42 @@ struct ContentView: View {
             requestedSurfaceId = nil
         }
         selectedTab = .active
+    }
+
+    /// Navigates to the workspace/surface named in a `cmux://` deep link,
+    /// reusing the same store mutations as a local-notification tap.
+    ///
+    /// Retries until the workspace list has loaded: a cold launch delivers
+    /// the link before `workspace.list` answers, and resolving immediately
+    /// would wrongly treat every target as unknown.
+    private func resolvePendingDeepLink() {
+        guard let url = pendingDeepLink else { return }
+
+        // cmux://surface/<surface-uuid>?workspace=<workspace-uuid>
+        let surfaceId = url.host == "surface"
+            ? url.pathComponents.dropFirst().first
+            : nil
+        let workspaceId = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+            .queryItems?
+            .first { $0.name == "workspace" }?
+            .value
+
+        if let workspaceId, !workspaceId.isEmpty,
+           workspaceStore.workspaces.contains(where: { $0.id == workspaceId })
+        {
+            pendingDeepLink = nil
+            workspaceStore.selectedId = workspaceId
+            requestedSurfaceId = surfaceId
+            notifStore.markWorkspaceSeen(workspaceId)
+            selectedTab = .active
+            return
+        }
+
+        // Only give up once the list is known: an empty list means "still
+        // loading", a populated one means the workspace is really gone.
+        guard !workspaceStore.workspaces.isEmpty else { return }
+        pendingDeepLink = nil
+        selectedTab = .inbox
     }
 
     private func openNotificationUserInfo(_ userInfo: [AnyHashable: Any]?) {
