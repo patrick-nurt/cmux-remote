@@ -23,23 +23,42 @@ public struct RelayConfig: Codable, Equatable, Sendable {
         public init(label: String, text: String) { self.label = label; self.text = text }
     }
 
+    /// ntfy.sh push config. When `topic` is non-empty the relay POSTs every
+    /// cmux notification event to `<server>/<topic>`; an empty topic keeps it
+    /// disabled (same gate as the `apns` block). `server` may point at a
+    /// self-hosted ntfy instance. `token` is the ntfy access token for topics
+    /// behind `auth-default-access: deny-all`; leave empty for public topics.
+    public struct Ntfy: Codable, Equatable, Sendable {
+        public var server: String
+        public var topic: String
+        public var token: String
+        public var priority: String
+        enum CodingKeys: String, CodingKey { case server, topic, token, priority }
+        public init(server: String, topic: String, token: String, priority: String) {
+            self.server = server; self.topic = topic
+            self.token = token; self.priority = priority
+        }
+    }
+
     public var listen: String
     public var allowLogin: [String]
     public var apns: APNs
+    public var ntfy: Ntfy
     public var snippets: [Snippet]
     public var defaultFps: Int
     public var idleFps: Int
 
     enum CodingKeys: String, CodingKey {
-        case listen, allowLogin = "allow_login", apns, snippets,
+        case listen, allowLogin = "allow_login", apns, ntfy, snippets,
              defaultFps = "default_fps", idleFps = "idle_fps"
     }
 
-    public init(listen: String, allowLogin: [String], apns: APNs,
+    public init(listen: String, allowLogin: [String], apns: APNs, ntfy: Ntfy,
                 snippets: [Snippet], defaultFps: Int, idleFps: Int)
     {
         self.listen = listen; self.allowLogin = allowLogin; self.apns = apns
-        self.snippets = snippets; self.defaultFps = defaultFps; self.idleFps = idleFps
+        self.ntfy = ntfy; self.snippets = snippets
+        self.defaultFps = defaultFps; self.idleFps = idleFps
     }
 
     /// Baseline config used to fill any key omitted from `relay.json`. The
@@ -53,6 +72,7 @@ public struct RelayConfig: Codable, Equatable, Sendable {
         listen: "0.0.0.0:4399",
         allowLogin: [],
         apns: .init(keyPath: "", keyId: "", teamId: "", topic: "", env: "sandbox"),
+        ntfy: .init(server: "https://ntfy.sh", topic: "", token: "", priority: "default"),
         snippets: [],
         defaultFps: 15,
         idleFps: 5
@@ -67,6 +87,7 @@ public struct RelayConfig: Codable, Equatable, Sendable {
         self.listen     = try c.decodeIfPresent(String.self,    forKey: .listen)     ?? d.listen
         self.allowLogin = try c.decodeIfPresent([String].self,  forKey: .allowLogin) ?? d.allowLogin
         self.apns       = try c.decodeIfPresent(APNs.self,      forKey: .apns)       ?? d.apns
+        self.ntfy       = try c.decodeIfPresent(Ntfy.self,      forKey: .ntfy)       ?? d.ntfy
         self.snippets   = try c.decodeIfPresent([Snippet].self, forKey: .snippets)   ?? d.snippets
         self.defaultFps = try c.decodeIfPresent(Int.self,       forKey: .defaultFps) ?? d.defaultFps
         self.idleFps    = try c.decodeIfPresent(Int.self,       forKey: .idleFps)    ?? d.idleFps

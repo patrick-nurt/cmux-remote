@@ -54,6 +54,10 @@ struct Serve: AsyncParsableCommand {
             sender: apnsProvider,
             config: { store.current.apns }
         )
+        let ntfyNotifier = NtfyNotifier(
+            config: { store.current.ntfy },
+            client: .init(eventLoopGroupProvider: .singleton)
+        )
         conn.onReset = {
             Task { await manager.broadcastReset() }
         }
@@ -70,6 +74,7 @@ struct Serve: AsyncParsableCommand {
                         }
                         Task { await manager.broadcastToAll(frame: .event(event)) }
                         Task { await apnsFanout.deliver(event: event) }
+                        Task { await ntfyNotifier.deliver(event: event) }
                     }
                     await stream.start(categories: EventCategory.allCases)
                     logger.info("cmux event stream attached")
