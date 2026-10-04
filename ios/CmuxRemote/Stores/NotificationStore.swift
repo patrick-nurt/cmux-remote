@@ -7,6 +7,10 @@ public final class NotificationStore {
     public var items: [NotificationRecord] = []
     public var onNew: (@MainActor (NotificationRecord) -> Void)?
     public var localNotificationsEnabled = true
+    /// When true, every notification banners — not just input-required and
+    /// test events. Backs the "BANNER ALL NOTIFICATIONS" settings toggle;
+    /// default off preserves the needs-input-only behaviour.
+    public var bannerAllNotifications = false
 
     public private(set) var unreadByWorkspace: [String: Int] = [:]
     public private(set) var unreadCount = 0
@@ -31,7 +35,8 @@ public final class NotificationStore {
             }
         }
         recomputeUnread()
-        if isNew, localNotificationsEnabled, deliveryPolicy.shouldPostLocalNotification {
+        if isNew, localNotificationsEnabled,
+           deliveryPolicy.shouldPostLocalNotification || bannerAllNotifications {
             onNew?(notification)
         }
     }

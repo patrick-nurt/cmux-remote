@@ -9,6 +9,7 @@ struct SettingsView: View {
     @AppStorage("cmux.port") private var port: Int = 4399
     @AppStorage("cmux.demoMode") private var demoMode: Bool = false
     @AppStorage("cmux.localNotificationsEnabled") private var localNotificationsEnabled: Bool = true
+    @AppStorage("cmux.bannerAllNotifications") private var bannerAllNotifications: Bool = false
     @State private var localStatus: TestNotificationStatus = .idle
     @State private var roundTripStatus: TestNotificationStatus = .idle
 
@@ -119,6 +120,24 @@ struct SettingsView: View {
                         }
                         .tint(CmuxTheme.accentGreen)
                         .accessibilityIdentifier("LocalNotificationsEnabledToggle")
+
+                        Toggle(isOn: $bannerAllNotifications) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("BANNER ALL NOTIFICATIONS")
+                                    .cmuxDisplay(11)
+                                    .foregroundStyle(CmuxTheme.ink)
+                                Text(String(
+                                    localized: "settings.notifications.banner_all.description",
+                                    defaultValue: "Every cmux notification banners — including task-finished events. Banners only arrive while the app is running; iOS suspends it in the background."
+                                ))
+                                    .cmuxMono(11)
+                                    .foregroundStyle(CmuxTheme.muted)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        .tint(CmuxTheme.accentGreen)
+                        .disabled(!localNotificationsEnabled)
+                        .accessibilityIdentifier("BannerAllNotificationsToggle")
 
                         if onTriggerTestNotification != nil {
                             Text(String(

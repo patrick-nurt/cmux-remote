@@ -16,6 +16,7 @@ struct CmuxRemoteApp: App {
     @State private var splashFinished = Self.shouldSkipSplash()
     @AppStorage("cmux.demoMode") private var demoMode: Bool = false
     @AppStorage("cmux.localNotificationsEnabled") private var localNotificationsEnabled: Bool = true
+    @AppStorage("cmux.bannerAllNotifications") private var bannerAllNotifications: Bool = false
 
     init() {
         let routingRPC = OfflineRPCDispatch()
@@ -64,6 +65,9 @@ struct CmuxRemoteApp: App {
                             await remoteNotifications.registerForRemoteNotifications()
                         }
                     }
+                }
+                .onChange(of: bannerAllNotifications) { _, enabled in
+                    notifStore.bannerAllNotifications = enabled
                 }
                 .opacity(splashFinished ? 1 : 0)
 
@@ -114,6 +118,7 @@ struct CmuxRemoteApp: App {
         bootstrapped = true
         let presenter = notifPresenter
         notifStore.localNotificationsEnabled = localNotificationsEnabled
+        notifStore.bannerAllNotifications = bannerAllNotifications
         notifStore.onNew = { record in presenter.present(record) }
         if localNotificationsEnabled {
             Task { await presenter.requestAuthorizationIfNeeded() }
