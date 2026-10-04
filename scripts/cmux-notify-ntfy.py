@@ -29,6 +29,10 @@ NTFY_TOKEN = os.environ.get("CMUX_NTFY_TOKEN", "")
 CMUX_BIN = "/Applications/cmux.app/Contents/Resources/bin/cmux"
 TREE_TIMEOUT_S = 2.0
 HTTP_TIMEOUT_S = 4.0
+# Skip the push when cmux is frontmost AND that exact pane is focused: cmux
+# already raises its own banner there, so a phone push is pure noise. Set
+# CMUX_NTFY_SKIP_WHEN_FOCUSED=0 to always push.
+SKIP_WHEN_FOCUSED = os.environ.get("CMUX_NTFY_SKIP_WHEN_FOCUSED", "1") != "0"
 
 # Category -> (label, tag, priority 1..5)
 CATEGORY_STYLE = {
@@ -99,6 +103,11 @@ def main() -> None:
     # Subagent turn-completes are noise (omp fans out many). Keep their
     # permission requests, drop their completions.
     if is_subagent and category == "turn-complete":
+        return
+
+    # The user is looking straight at this pane in cmux, which shows its own
+    # banner. A push would only duplicate what is already on screen.
+    if SKIP_WHEN_FOCUSED and ctx.get("appFocused") and ctx.get("focusedPanel"):
         return
 
     ws_title, sf_title = resolve_names(ws_id, sf_id)

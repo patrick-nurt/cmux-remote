@@ -287,6 +287,17 @@ Set `CMUX_NTFY_TOPIC` / `CMUX_NTFY_SERVER` / `CMUX_NTFY_TOKEN` to override
 the built-in topic, or use a self-hosted ntfy. The topic name is the only
 credential, so treat it as a password.
 
+Noise controls, in order of how much they cut:
+
+- **Subagent turn-completes are dropped** — an agent that fans out
+  subagents otherwise pushes on every one of their completions. Their
+  permission requests still come through.
+- **Already-focused panes are skipped** — when cmux is frontmost *and*
+  the notification's pane is the focused one, cmux raises its own banner,
+  so a push would only duplicate what is already on screen. Set
+  `CMUX_NTFY_SKIP_WHEN_FOCUSED=0` to always push.
+- `idle-reminder` notifications go out at priority 2 (silent on iOS).
+
 > The deep link works only while the app is installed; if the workspace no
 > longer exists the app falls back to its Inbox.
 
