@@ -23,7 +23,6 @@ extension RelayConfig {
             allowLogin: ["a@b"],
             apns: .init(keyPath: "/dev/null", keyId: "K",
                         teamId: "T", topic: "x", env: "sandbox"),
-            ntfy: .init(server: "https://ntfy.sh", topic: "", token: "", priority: "default"),
             snippets: [],
             defaultFps: 15,
             idleFps: 5
