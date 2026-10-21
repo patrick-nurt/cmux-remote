@@ -27,6 +27,8 @@ public protocol CMUXFacade: Sendable {
 /// the unit suite fast and deterministic; the NIO glue is exercised
 /// in M3.11's HTTPServer fixture and the M3.13 live smoke.
 public actor WSProtocolMachine {
+    private let logger = Logger(label: "cmux-relay.ws")
+
     public enum Action: Equatable, Sendable {
         case sendText(String)
         case close
@@ -78,10 +80,13 @@ public actor WSProtocolMachine {
     public func processText(_ text: String) async -> [Action] {
         let data = Data(text.utf8)
         if !helloed {
+            logger.debug("WS first frame (\(data.count) bytes)")
             guard let hello = try? JSONDecoder().decode(HelloFrame.self, from: data) else {
+                logger.warning("WS hello DECODE FAILED -> closing")
                 return [.close]
             }
             helloed = true
+            logger.info("WS hello ok device=\(hello.deviceId) app=\(hello.appVersion) proto=\(hello.protocolVersion)")
             return [.attachSession(deviceId: hello.deviceId)]
         }
 
@@ -122,10 +127,12 @@ public actor WSProtocolMachine {
         }
     }
 
-    /// The 100ms hello timer fired. Returns `[.close]` if the peer never
-    /// sent a hello, `[]` otherwise (handler will see nil and no-op).
+    /// The hello deadline fired (see `WebSocketSessionLifecycle.helloDeadline`).
+    /// Returns `[.close]` if the peer never sent a hello, `[]` otherwise
+    /// (handler will see nil and no-op).
     public func helloMissed() -> [Action] {
-        helloed ? [] : [.close]
+        if !helloed { logger.warning("WS hello MISSED (no hello within deadline) -> closing") }
+        return helloed ? [] : [.close]
     }
 
 

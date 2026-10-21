@@ -268,11 +268,13 @@ public actor Routes {
                 break
             case .denied:
                 logger.warning("registration denied: Tailscale login is outside policy")
+
                 return .init(.forbidden)
             case .identityUnavailable:
                 logger.warning("registration deferred: Mac Tailscale identity unavailable")
                 return Self.identityUnavailableResponse()
             }
+            logger.info("register: peer \(peer.loginName) host=\(peer.hostname) os=\(peer.os) -> registering")
         }
 
         let deviceId = BearerSourceAuthorizer.deviceID(for: peer.nodeKey)

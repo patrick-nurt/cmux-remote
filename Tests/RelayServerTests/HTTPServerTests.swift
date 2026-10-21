@@ -280,7 +280,8 @@ final class HTTPServerTests: XCTestCase {
     /// instant it upgraded, which presented as "connects on home Wi-Fi only".
     func testHelloAcceptedAfterSlowCellularRoundTrip() async throws {
         try await withFixture { fx in
-            let token = try fx.deviceStore.register(deviceId: "d-slow-hello",
+            let deviceID = BearerSourceAuthorizer.deviceID(for: "nk-fixture")
+            let token = try fx.deviceStore.register(deviceId: deviceID,
                                                     loginName: "a@b",
                                                     hostname: "iPhone",
                                                     apnsToken: nil)
@@ -290,7 +291,7 @@ final class HTTPServerTests: XCTestCase {
             do {
                 try await Task.sleep(for: .milliseconds(1_500))
                 try await client.sendText(
-                    #"{"deviceId":"d-slow-hello","appVersion":"1","protocolVersion":1}"#
+                    #"{"deviceId":"\#(deviceID)","appVersion":"1","protocolVersion":1}"#
                 )
                 let battery = try await client.sendTextAwaitingResponse(
                     #"{"id":"battery","method":"host.battery","params":{}}"#
