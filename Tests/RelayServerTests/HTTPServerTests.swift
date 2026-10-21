@@ -1,5 +1,7 @@
 import XCTest
 import Foundation
+import NIOCore
+import NIOPosix
 import SharedKit
 @testable import RelayServer
 @testable import RelayCore
@@ -273,6 +275,42 @@ final class HTTPServerTests: XCTestCase {
         }
     }
 
+    /// A phone on cellular reaches the relay with a ~0.3-0.4 s round trip, and
+    /// it sends `hello` from its WebSocket `onOpen` callback — so the relay
+    /// must accept a hello that arrives noticeably later than one LAN hop.
+    /// Regression: a 100 ms hello budget closed every cellular connection the
+    /// instant it upgraded, which presented as "connects on home Wi-Fi only".
+    func testHelloAcceptedAfterSlowCellularRoundTrip() async throws {
+        try await withFixture { fx in
+            let token = try fx.deviceStore.register(deviceId: "d-slow-hello",
+                                                    loginName: "a@b",
+                                                    hostname: "iPhone",
+                                                    apnsToken: nil)
+            let client = try await LoopbackWebSocketClient.connect(
+                group: fx.group, host: fx.host, port: fx.port, token: token
+            )
+            do {
+                try await Task.sleep(for: .milliseconds(1_500))
+                try await client.sendText(
+                    #"{"deviceId":"d-slow-hello","appVersion":"1","protocolVersion":1}"#
+                )
+                let battery = try await client.sendTextAwaitingResponse(
+                    #"{"id":"battery","method":"host.battery","params":{}}"#
+                )
+                let response = try JSONDecoder().decode(
+                    RPCResponse.self, from: Data(battery.utf8)
+                )
+                XCTAssertEqual(response.id, "battery")
+                XCTAssertTrue(response.isOk,
+                              "relay must keep serving a connection whose hello raced a slow uplink")
+            } catch {
+                await client.close()
+                throw error
+            }
+            await client.close()
+        }
+    }
+
     func testWebSocketFrameLimitCoversMaxFileUploadEnvelope() {
         let base64Length = ((RelayFileUploadService.maxBytes + 2) / 3) * 4
         let conservativeJSONEnvelopeOverhead = 4096
@@ -286,6 +324,67 @@ final class HTTPServerTests: XCTestCase {
 
     func testWebSocketFrameLimitRemainsExactly24MiB() {
         XCTAssertEqual(HTTPServer.maxWebSocketFrameBytes, 24 * 1024 * 1024)
+    }
+
+    // MARK: - Dual-stack listener
+
+    func testWildcardIPv4BindIsWidenedToIPv6Wildcard() {
+        XCTAssertEqual(HTTPServer.dualStackBindHost("0.0.0.0"), "::",
+                       "a 0.0.0.0 listener accepts no IPv6 peer, and iOS picks the Mac's IPv6 tailnet address on cellular")
+    }
+
+    func testExplicitBindAddressIsLeftUntouched() {
+        XCTAssertEqual(HTTPServer.dualStackBindHost("127.0.0.1"), "127.0.0.1")
+        XCTAssertEqual(HTTPServer.dualStackBindHost("::1"), "::1")
+        XCTAssertEqual(HTTPServer.dualStackBindHost("100.73.89.26"), "100.73.89.26")
+        XCTAssertEqual(HTTPServer.dualStackBindHost("fd7a:115c:a1e0::8c33:591b"),
+                       "fd7a:115c:a1e0::8c33:591b")
+    }
+
+    /// The wildcard default must serve the IPv6 loopback as well as IPv4, so a
+    /// phone that only has the Mac's IPv6 tailnet address can connect.
+    func testWildcardListenerAcceptsIPv6Loopback() async throws {
+        let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        let store = try DeviceStore.empty()
+        let auth = MockAuthService(peers: [
+            "127.0.0.1": .init(loginName: "a@b", hostname: "iPhone",
+                               os: "ios", nodeKey: "nk-v4"),
+            "::1": .init(loginName: "a@b", hostname: "iPhone",
+                         os: "ios", nodeKey: "nk-v6"),
+        ])
+        let routes = Routes(deviceStore: store, config: .testValue, auth: auth)
+        let server = HTTPServer(group: group, routes: routes, auth: auth,
+                                deviceStore: store,
+                                sessionManager: SessionManager(
+                                    reader: FixtureSurfaceReader(screens: []),
+                                    defaultFps: 15, idleFps: 5),
+                                cmux: FixtureCMUXFacade())
+        // Bind exactly what `cmux-relay serve` binds for the default
+        // relay.json listen value.
+        let chan = try await server.bind(host: "0.0.0.0", port: 0)
+        guard let port = chan.localAddress?.port else {
+            try? await chan.close().get(); try? await group.shutdownGracefully()
+            XCTFail("no bound port"); return
+        }
+        do {
+            // Dial the IPv6 loopback. When the wildcard bind is IPv4-only,
+            // nothing listens on `::1` and the connect is refused, so this
+            // succeeds only for a genuinely dual-stack listener.
+            let connected = try await ClientBootstrap(group: group)
+                .connectTimeout(.seconds(3))
+                .connect(host: "::1", port: port)
+                .get()
+            XCTAssertTrue(connected.isActive,
+                          "wildcard listener must accept an IPv6 peer")
+            try? await connected.close().get()
+        } catch {
+            try? await chan.close().get()
+            try? await group.shutdownGracefully()
+            XCTFail("IPv6 client could not reach the wildcard listener: \(error)")
+            return
+        }
+        try? await chan.close().get()
+        try? await group.shutdownGracefully()
     }
 
     func testMaximumChunkRPCStaysBelowExistingFrameLimit() throws {

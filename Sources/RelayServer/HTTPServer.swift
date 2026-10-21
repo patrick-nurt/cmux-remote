@@ -169,7 +169,23 @@ public final class HTTPServer: @unchecked Sendable {
                     .configureHTTPServerPipeline(withServerUpgrade: upgradeConfig)
                     .flatMap { channel.pipeline.addHandler(httpHandler) }
             }
-        return try await bs.bind(host: host, port: port).get()
+        return try await bs.bind(host: HTTPServer.dualStackBindHost(host), port: port).get()
+    }
+
+    /// Map an IPv4 wildcard bind to the IPv6 wildcard so the listener covers
+    /// both address families.
+    ///
+    /// A socket bound to `0.0.0.0` is AF_INET only: it accepts no IPv6 peer
+    /// at all. iOS hands cmux Remote the Mac's *IPv6* tailnet address whenever
+    /// the phone is on an IPv6-only or IPv6-preferred cellular path, so an
+    /// IPv4-only listener refuses those connections outright — the phone
+    /// reports "needs attention" while the relay's own log stays silent,
+    /// because no connection ever reaches the accept loop.
+    /// NIO creates AF_INET6 sockets with `IPV6_V6ONLY=0`, so binding `::`
+    /// serves IPv4 and IPv6 from one listener. An explicit IPv4 or IPv6
+    /// address in `relay.json` is left untouched.
+    static func dualStackBindHost(_ host: String) -> String {
+        host == "0.0.0.0" ? "::" : host
     }
 
     /// Blocking entry point — bind, log the bound address, and await
