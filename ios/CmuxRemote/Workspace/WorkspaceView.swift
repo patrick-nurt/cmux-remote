@@ -563,8 +563,23 @@ struct WorkspaceView: View {
             KeyButton(label: "/") { sendSymbol("/") }
             KeyButton(label: "$") { sendSymbol("$") }
             KeyButton(label: "/new", accessibilityLabel: "send slash new shortcut") { sendText("/new") }
-            KeyButton(label: "space", accessibilityLabel: "send space for omx selection") { sendText(" ") }
+            KeyButton(label: "␣", accessibilityLabel: "send space for omx selection") { sendText(" ") }
+            optionUpShortcut()
         }
+    }
+
+    private func optionUpShortcut(minimumHeight: CGFloat = 34) -> some View {
+        KeyButton(
+            label: "⌥ ↑",
+            accessibilityLabel: String(
+                localized: "workspace.shortcut.option_up",
+                defaultValue: "Send Option Up arrow"
+            ),
+            minimumHeight: minimumHeight
+        ) {
+            sendKey(.named("up", modifiers: [.alt]))
+        }
+        .accessibilityIdentifier("OptionUpShortcutButton")
     }
 
     private var allShortcutsRow: some View {
@@ -582,7 +597,8 @@ struct WorkspaceView: View {
             KeyButton(label: "/", minimumHeight: 44) { sendSymbol("/") }
             KeyButton(label: "$", minimumHeight: 44) { sendSymbol("$") }
             KeyButton(label: "/new", accessibilityLabel: "send slash new shortcut", minimumHeight: 44) { sendText("/new") }
-            KeyButton(label: "space", accessibilityLabel: "send space for omx selection", minimumHeight: 44) { sendText(" ") }
+            KeyButton(label: "␣", accessibilityLabel: "send space for omx selection", minimumHeight: 44) { sendText(" ") }
+            optionUpShortcut(minimumHeight: 44)
         }
     }
 
@@ -812,11 +828,11 @@ struct WorkspaceView: View {
     }
 
     private var inputFeedbackMessage: String? {
-        composer.errorMessage ?? surfaceStore.inputStatus.message
+        surfaceStore.subscriptionError ?? composer.errorMessage ?? surfaceStore.inputStatus.message
     }
 
     private var inputFeedbackIsError: Bool {
-        composer.errorMessage != nil || surfaceStore.inputStatus.isError
+        surfaceStore.subscriptionError != nil || composer.errorMessage != nil || surfaceStore.inputStatus.isError
     }
 
     private func activeSurface() throws -> (workspaceId: String, surfaceId: String) {
@@ -841,7 +857,14 @@ struct WorkspaceView: View {
     private func subscribeFirstSurfaceIfNeeded() async {
         guard let workspace = currentWorkspace else { return }
         if activeWorkspaceId == workspace.id, activeSurfaceId != nil { return }
-        let surfaces = workspaceStore.surfaces(for: workspace.id)
+        var surfaces = workspaceStore.surfaces(for: workspace.id)
+        if surfaces.isEmpty {
+            // The list may have missed this workspace's surfaces (e.g. a
+            // refused list call); ask again before showing nothing.
+            await workspaceStore.refreshSurfaces(workspaceId: workspace.id)
+            guard workspaceStore.selectedId == workspace.id else { return }
+            surfaces = workspaceStore.surfaces(for: workspace.id)
+        }
         guard let first = surfaces.first else { return }
         activeWorkspaceId = workspace.id
         activeSurfaceId = first.id

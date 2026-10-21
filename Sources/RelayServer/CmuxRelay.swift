@@ -91,24 +91,15 @@ struct Serve: AsyncParsableCommand {
             }
         }
         let auth = TailscaledLocalAuth()
-
-        // Foolproof pairing: a fresh relay.json has an empty allow_login, which
-        // would 403 every phone. The relay runs on the operator's own Mac, so its
-        // own tailnet login is the same account their phone signs in with —
-        // authorise it automatically. Tagged/headless nodes resolve to nil and we
-        // fall back to whatever allow_login lists. Opt out with CMUX_NO_SELF_LOGIN=1.
-        var effectiveConfig = store.current
-        if ProcessInfo.processInfo.environment["CMUX_NO_SELF_LOGIN"] == nil,
-           let selfLogin = await auth.selfLogin() {
-            if !effectiveConfig.allowLogin.contains(selfLogin) {
-                logger.info("auto-authorising this Mac's tailnet login for pairing: \(selfLogin)")
-            }
-            effectiveConfig = effectiveConfig.authorizing(login: selfLogin)
-        }
-
-        let routes = Routes(deviceStore: deviceStore,
-                            config: effectiveConfig,
-                            auth: auth)
+        let allowSelfLogin = Self.shouldAutoAuthorizeSelfLogin(
+            environment: ProcessInfo.processInfo.environment
+        )
+        let routes = Routes(
+            deviceStore: deviceStore,
+            config: { store.current },
+            auth: auth,
+            allowSelfLogin: allowSelfLogin
+        )
         let uploadRoot = ProcessInfo.processInfo.environment["CMUX_RELAY_UPLOAD_ROOT"]
             .map { URL(fileURLWithPath: $0, isDirectory: true) }
         let uploadService = uploadRoot.map { ChunkedFileUploadService(rootURL: $0) }
@@ -149,6 +140,14 @@ struct Serve: AsyncParsableCommand {
 
         logger.info("starting cmux-relay on \(host):\(port)")
         try await server.run(host: host, port: port)
+    }
+    static func shouldAutoAuthorizeSelfLogin(environment: [String: String]) -> Bool {
+        // The installer always writes the variable ("0" = keep auto-authorise);
+        // any other non-empty value opts out, as it did before the plist set it.
+        switch environment["CMUX_NO_SELF_LOGIN"] {
+        case nil, "", "0": true
+        default: false
+        }
     }
 }
 
@@ -192,12 +191,20 @@ struct Devices: AsyncParsableCommand {
 
 // MARK: - Path helpers
 
+/// `$HOME` when set, else the account home. `NSHomeDirectory()` alone ignores
+/// `$HOME`, so an ephemeral smoke relay run with a temporary `HOME` used to
+/// read and rewrite the live relay's device registry.
+func relayHomeDirectory(environment: [String: String] = ProcessInfo.processInfo.environment) -> String {
+    if let home = environment["HOME"], !home.isEmpty { return home }
+    return NSHomeDirectory()
+}
+
 func defaultConfigPath() -> String {
-    "\(NSHomeDirectory())/.cmuxremote/relay.json"
+    "\(relayHomeDirectory())/.cmuxremote/relay.json"
 }
 
 func devicesStorePath() -> String {
-    "\(NSHomeDirectory())/.cmuxremote/devices.json"
+    "\(relayHomeDirectory())/.cmuxremote/devices.json"
 }
 
 /// Split `RelayConfig.listen` ("host:port") into a host + port pair.

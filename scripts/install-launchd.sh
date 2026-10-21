@@ -74,6 +74,7 @@ SOCKET=""
 if [ "$PIN_SOCKET_SET" -eq 1 ]; then
   SOCKET="$PIN_SOCKET"
 fi
+SELF_LOGIN_OPT_OUT="${CMUX_NO_SELF_LOGIN:-0}"
 DEV_ALLOW_LOCALHOST="${CMUX_DEV_ALLOW_LOCALHOST:-0}"
 # launchd starts agents with a stripped PATH; tailscale CLI on macOS lives in
 # /usr/local/bin (pkg install), /opt/homebrew/bin (brew), or the Tailscale.app
@@ -114,6 +115,7 @@ render_plist() {
     -e "s|__SOCKET__|$(render_token "$SOCKET")|g" \
     -e "s|__LOGDIR__|$(render_token "$LOGDIR")|g" \
     -e "s|__DEV_ALLOW_LOCALHOST__|$(render_token "$DEV_ALLOW_LOCALHOST")|g" \
+    -e "s|__NO_SELF_LOGIN__|$(render_token "$SELF_LOGIN_OPT_OUT")|g" \
     -e "s|__RELAY_PATH__|$(render_token "$RELAY_PATH")|g" \
     "$TEMPLATE"
 }
@@ -190,8 +192,12 @@ note "building release binary"
 
 note "installing binary and logs under $DEST"
 mkdir -p "$DEST/bin" "$LOGDIR" "$LAUNCH_AGENTS_DIR"
-cp "$BIN_SRC" "$BIN_DEST"
-chmod 755 "$BIN_DEST"
+# Replace the binary by rename, never in place: overwriting the file the
+# running relay was launched from invalidates its code signature, and macOS
+# then kills it and refuses relaunch (OS_REASON_CODESIGNING).
+cp "$BIN_SRC" "$BIN_DEST.new"
+chmod 755 "$BIN_DEST.new"
+mv -f "$BIN_DEST.new" "$BIN_DEST"
 
 note "rendering $PLIST"
 render_plist > "$PLIST"

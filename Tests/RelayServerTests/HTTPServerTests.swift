@@ -12,9 +12,22 @@ final class HTTPServerTests: XCTestCase {
     /// to the group across tests.
     private func withFixture(
         allowLogin: [String] = ["a@b"],
+        peers: [String: PeerIdentity] = [
+            "127.0.0.1": .init(loginName: "a@b", hostname: "iPhone",
+                                os: "ios", nodeKey: "nk-fixture")
+        ],
+        selfLogin: String? = nil,
+        selfLoginError: TailnetIdentityError? = nil,
+        whoisError: TailnetIdentityError? = nil,
         _ body: (HTTPServerFixture) async throws -> Void
     ) async throws {
-        let fx = try await HTTPServerFixture.make(allowLogin: allowLogin)
+        let fx = try await HTTPServerFixture.make(
+            allowLogin: allowLogin,
+            peers: peers,
+            selfLogin: selfLogin,
+            selfLoginError: selfLoginError,
+            whoisError: whoisError
+        )
         do {
             try await body(fx)
             await fx.shutdown()
@@ -56,6 +69,131 @@ final class HTTPServerTests: XCTestCase {
         }
     }
 
+    func testRegisterRejectsCrossSiteOriginAndForeignHost() async throws {
+        try await withFixture { fx in
+            for extra in ["Origin: https://evil.example\r\n", "Host: evil.example:4399\r\n"] {
+                let host = extra.hasPrefix("Host:") ? "" : "Host: \(fx.host)\r\n"
+                let resp = try await fx.rawRequest(
+                    "POST /v1/devices/me/register HTTP/1.1\r\n\(host)\(extra)Content-Length: 0\r\nConnection: close\r\n\r\n"
+                )
+                XCTAssertEqual(resp.statusCode, 403, extra)
+            }
+            XCTAssertTrue(fx.deviceStore.allDevices().isEmpty)
+        }
+    }
+
+    func testRegisterReturnsRetryableIdentityUnavailableResponse() async throws {
+        try await withFixture(
+            allowLogin: [],
+            selfLoginError: .serviceUnavailable
+        ) { fx in
+            let response = try await fx.rawRequest(
+                "POST /v1/devices/me/register HTTP/1.1\r\nHost: \(fx.host)\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            )
+
+            XCTAssertEqual(response.statusCode, 503)
+            XCTAssertEqual(response.headers["retry-after"], "5")
+            XCTAssertEqual(response.headers["content-type"], "application/json")
+            XCTAssertTrue(response.bodyString.contains("tailscale_identity_unavailable"))
+        }
+    }
+
+    func testCredentialPreflightAcceptsActiveBearer() async throws {
+        try await withFixture { fx in
+            let deviceID = BearerSourceAuthorizer.deviceID(for: "nk-fixture")
+            let token = try fx.deviceStore.register(
+                deviceId: deviceID, loginName: "a@b",
+                hostname: "iPhone", apnsToken: nil
+            )
+            let response = try await fx.rawRequest(
+                "GET /v1/devices/me HTTP/1.1\r\nHost: \(fx.host)\r\nAuthorization: Bearer \(token)\r\nConnection: close\r\n\r\n"
+            )
+
+            XCTAssertEqual(response.statusCode, 200)
+            XCTAssertTrue(response.bodyString.contains(deviceID))
+        }
+    }
+
+    func testCredentialPreflightRejectsRevokedBearer() async throws {
+        try await withFixture { fx in
+            let deviceID = BearerSourceAuthorizer.deviceID(for: "nk-fixture")
+            let token = try fx.deviceStore.register(
+                deviceId: deviceID, loginName: "a@b",
+                hostname: "iPhone", apnsToken: nil
+            )
+            try fx.deviceStore.revoke(deviceId: deviceID)
+            let response = try await fx.rawRequest(
+                "GET /v1/devices/me HTTP/1.1\r\nHost: \(fx.host)\r\nAuthorization: Bearer \(token)\r\nConnection: close\r\n\r\n"
+            )
+
+            XCTAssertEqual(response.statusCode, 401)
+        }
+    }
+
+    func testCredentialPreflightReturns503WhenWhoisIsUnavailable() async throws {
+        let peer = PeerIdentity(
+            loginName: "a@b", hostname: "iPhone",
+            os: "iOS", nodeKey: "nk-fixture"
+        )
+        try await withFixture(
+            peers: ["127.0.0.1": peer],
+            whoisError: .serviceUnavailable
+        ) { fx in
+            let deviceID = BearerSourceAuthorizer.deviceID(for: peer.nodeKey)
+            let token = try fx.deviceStore.register(
+                deviceId: deviceID, loginName: "a@b",
+                hostname: "iPhone", apnsToken: nil
+            )
+            let response = try await fx.rawRequest(
+                "GET /v1/devices/me HTTP/1.1\r\nHost: \(fx.host)\r\nAuthorization: Bearer \(token)\r\nConnection: close\r\n\r\n"
+            )
+
+            XCTAssertEqual(response.statusCode, 503)
+            XCTAssertEqual(response.headers["retry-after"], "5")
+        }
+    }
+
+    func testCredentialPreflightRejectsBearerFromDifferentTailnetNode() async throws {
+        try await withFixture { fx in
+            let stolenToken = try fx.deviceStore.register(
+                deviceId: BearerSourceAuthorizer.deviceID(for: "nodekey:other"),
+                loginName: "a@b",
+                hostname: "Other iPhone",
+                apnsToken: nil
+            )
+            let response = try await fx.rawRequest(
+                "GET /v1/devices/me HTTP/1.1\r\nHost: \(fx.host)\r\nAuthorization: Bearer \(stolenToken)\r\nConnection: close\r\n\r\n"
+            )
+
+            XCTAssertEqual(response.statusCode, 401)
+        }
+    }
+
+    func testWebSocketRejectsBearerFromDifferentTailnetNode() async throws {
+        try await withFixture { fx in
+            let stolenToken = try fx.deviceStore.register(
+                deviceId: BearerSourceAuthorizer.deviceID(for: "nodekey:other"),
+                loginName: "a@b",
+                hostname: "Other iPhone",
+                apnsToken: nil
+            )
+            let response = try await fx.rawRequest(
+                "GET /v1/ws HTTP/1.1\r\nHost: \(fx.host)\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: cmuxremote.v1, bearer.\(stolenToken)\r\n\r\n"
+            )
+
+            XCTAssertNotEqual(response.statusCode, 101)
+        }
+    }
+
+    func testStateWithoutBearerReturns401() async throws {
+        try await withFixture { fx in
+            let response = try await fx.rawRequest(
+                "GET /v1/state HTTP/1.1\r\nHost: \(fx.host)\r\nConnection: close\r\n\r\n"
+            )
+            XCTAssertEqual(response.statusCode, 401)
+        }
+    }
+
     func testApnsWithoutBearerReturns401() async throws {
         try await withFixture { fx in
             let body = #"{"apns_token":"abcdef1234","env":"prod"}"#
@@ -68,7 +206,8 @@ final class HTTPServerTests: XCTestCase {
 
     func testApnsWithValidBearerPersists() async throws {
         try await withFixture { fx in
-            let token = try fx.deviceStore.register(deviceId: "d-apns",
+            let deviceID = BearerSourceAuthorizer.deviceID(for: "nk-fixture")
+            let token = try fx.deviceStore.register(deviceId: deviceID,
                                                     loginName: "a@b",
                                                     hostname: "iPhone",
                                                     apnsToken: nil)
@@ -77,9 +216,9 @@ final class HTTPServerTests: XCTestCase {
                 "POST /v1/devices/me/apns HTTP/1.1\r\nHost: \(fx.host)\r\nAuthorization: Bearer \(token)\r\nContent-Type: application/json\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
             )
             XCTAssertEqual(resp.statusCode, 204, "body=\(resp.bodyString)")
-            XCTAssertEqual(fx.deviceStore.lookup(deviceId: "d-apns")?.apnsToken,
+            XCTAssertEqual(fx.deviceStore.lookup(deviceId: deviceID)?.apnsToken,
                            "abcdef1234")
-            XCTAssertEqual(fx.deviceStore.lookup(deviceId: "d-apns")?.apnsEnv, "prod")
+            XCTAssertEqual(fx.deviceStore.lookup(deviceId: deviceID)?.apnsEnv, "prod")
         }
     }
 
@@ -97,7 +236,8 @@ final class HTTPServerTests: XCTestCase {
 
     func testWebSocketUpgradeWithValidBearerReturns101() async throws {
         try await withFixture { fx in
-            let token = try fx.deviceStore.register(deviceId: "d-ws",
+            let deviceID = BearerSourceAuthorizer.deviceID(for: "nk-fixture")
+            let token = try fx.deviceStore.register(deviceId: deviceID,
                                                     loginName: "a@b",
                                                     hostname: "iPhone",
                                                     apnsToken: nil)
@@ -106,6 +246,20 @@ final class HTTPServerTests: XCTestCase {
             )
             XCTAssertEqual(resp.statusCode, 101,
                            "expected upgrade, got \(resp.statusCode): \(resp.bodyString)")
+        }
+    }
+
+    func testWebSocketUpgradeFromCrossSiteOriginIsRejected() async throws {
+        try await withFixture { fx in
+            let deviceID = BearerSourceAuthorizer.deviceID(for: "nk-fixture")
+            let token = try fx.deviceStore.register(deviceId: deviceID,
+                                                    loginName: "a@b",
+                                                    hostname: "iPhone",
+                                                    apnsToken: nil)
+            let resp = try await fx.rawRequest(
+                "GET /v1/ws HTTP/1.1\r\nHost: \(fx.host)\r\nOrigin: https://evil.example\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: cmuxremote.v1, bearer.\(token)\r\n\r\n"
+            )
+            XCTAssertEqual(resp.statusCode, 403)
         }
     }
 
