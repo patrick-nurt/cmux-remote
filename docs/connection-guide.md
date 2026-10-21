@@ -214,6 +214,30 @@ tailscale status
 - Mac과 iPhone이 **같은 Tailnet(같은 계정)** 에 로그인돼 있어야 합니다.
 - iPhone의 Tailscale 앱에서 연결이 켜져 있는지 확인하세요.
 
+### ④a 릴레이가 IPv6로 응답하나?
+
+휴대폰이 IPv6 전용 또는 IPv6 우선 셀룰러 경로에 있으면 앱은 Mac의 **IPv6**
+Tailnet 주소를 받습니다. 따라서 리스너는 두 주소 체계를 모두 받아야
+합니다. `relay.json`이 `0.0.0.0`이면 릴레이는 `::`(듀얼 스택)로 바인딩합니다.
+시작 로그로 확인하세요.
+
+```bash
+grep "listening on" ~/.cmuxremote/log/stderr.log
+# … listening on [IPv6]::/:::4399      ← 듀얼 스택, 정상
+# … listening on [IPv4]0.0.0.0:4399    ← IPv4 전용, 셀룰러에서 실패
+```
+
+다른 Tailnet 기기에서 두 주소 체계를 모두 확인하세요.
+
+```bash
+curl -s http://$(tailscale ip -4):4399/v1/health     # IPv4
+curl -s "http://[$(tailscale ip -6)]:4399/v1/health" # IPv6
+```
+
+둘 다 `{"ok":true}`를 반환해야 합니다. 릴레이 로그에 `WS upgrade` 줄이
+없는데 응답도 없으면, 토큰이나 앱이 아니라 휴대폰이 리스너에 도달하지
+못한 것입니다.
+
 ### ⑤ 앱에 입력한 주소가 맞나?
 
 ```bash

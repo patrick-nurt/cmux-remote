@@ -215,6 +215,30 @@ tailscale status
 - The Mac and iPhone must be on the **same Tailnet (same account)**.
 - Make sure Tailscale is toggled on in the iPhone's Tailscale app.
 
+### ④a Does the relay answer on IPv6?
+
+The phone is handed the Mac's **IPv6** tailnet address whenever it is on an
+IPv6-only or IPv6-preferred cellular path, so the listener must cover both
+address families. The relay binds `::` (dual-stack) whenever `relay.json`
+says `0.0.0.0`; check the startup line:
+
+```bash
+grep "listening on" ~/.cmuxremote/log/stderr.log
+# … listening on [IPv6]::/:::4399      ← dual-stack, correct
+# … listening on [IPv4]0.0.0.0:4399    ← IPv4-only, cellular will fail
+```
+
+Probe both families from another tailnet machine:
+
+```bash
+curl -s http://$(tailscale ip -4):4399/v1/health    # IPv4
+curl -s "http://[$(tailscale ip -6)]:4399/v1/health" # IPv6
+```
+
+Both must return `{"ok":true}`. A silent failure with no `WS upgrade` line in
+the relay log means the phone never reached the listener at all — check this
+before suspecting the token or the app.
+
 ### ⑤ Is the address in the app correct?
 
 ```bash
