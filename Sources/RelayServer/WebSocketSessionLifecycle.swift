@@ -5,6 +5,20 @@ import SharedKit
 /// Owns one WebSocket connection's generation, hello deadline, and installed
 /// session. Every mutable field is accessed only on `eventLoop`.
 final class WebSocketSessionLifecycle: @unchecked Sendable {
+    /// Deadline for the client's `hello` after a successful upgrade.
+    ///
+    /// The client sends `hello` from its WebSocket `onOpen` callback, so the
+    /// budget has to cover one full round trip plus app-side wake-up — it is
+    /// never a same-host hop. Measured round trip to the paired iPhone is
+    /// ~0.3-0.4 s on cellular (Tailscale direct or DERP-relayed) against ~1 ms
+    /// on the same LAN. The previous 100 ms budget therefore closed every
+    /// cellular connection the moment the upgrade succeeded, which the phone
+    /// saw as "works on home Wi-Fi, never on mobile data" while Tailscale
+    /// still reported itself connected. 30 s keeps the reap-on-silence safety
+    /// net for a client that upgrades and then says nothing, without racing a
+    /// legitimate handshake.
+    static let helloDeadline: TimeAmount = .seconds(30)
+
     private enum AttachmentState {
         case none
         case attaching(generation: UInt64)
@@ -47,7 +61,7 @@ final class WebSocketSessionLifecycle: @unchecked Sendable {
         attachmentState = .none
         let candidate = generation
         helloTimer?.cancel()
-        helloTimer = eventLoop.scheduleTask(in: .milliseconds(100)) { [weak self, weak queue] in
+        helloTimer = eventLoop.scheduleTask(in: Self.helloDeadline) { [weak self, weak queue] in
             guard let queue else { return }
             queue.enqueue { [weak self] in
                 let actions = await machine.helloMissed()
